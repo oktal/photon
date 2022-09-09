@@ -1,0 +1,7 @@
+from_date="yesterday"
+to_date="today"
+
+[sources.rte]
+
+[sinks.console]
+codec="json"
