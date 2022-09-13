@@ -62,15 +62,24 @@ impl Sink for InfluxDB {
     fn sink(&self, points: &Points) -> SinkResult<()> {
         let utc_now = Utc::now();
 
-        let lines: Vec<Line> = points.iter().map(|p| line(p, utc_now)).collect();
+        let lines: Vec<String> = points
+            .iter()
+            .map(|p| line(p, utc_now))
+            .map(|l| l.to_string())
+            .collect();
+
+        let body = lines.join("\n");
 
         debug!("sending {} points", lines.len());
 
         let client = reqwest::blocking::Client::new();
+        let write_url = self.host.join("/api/v2/write").expect("invalid URL");
+        let token_header_value = format!("Token {}", self.token);
         let response = client
-            .post(self.host.clone())
-            .bearer_auth(self.token.clone())
+            .post(write_url)
+            .header(reqwest::header::AUTHORIZATION, token_header_value)
             .query(&[("org", &self.org), ("bucket", &self.bucket)])
+            .body(body)
             .send()
             .map_err(Error::Request)?;
 
