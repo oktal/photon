@@ -42,7 +42,7 @@ impl ConfigRaw {
     fn to_config(self) -> Result<Config, Error> {
         Ok(Config {
             from_date: Self::parse_date(&self.from_date, "from_date")?,
-            to_date: Self::parse_date(&self.from_date, "to_date")?,
+            to_date: Self::parse_date(&self.to_date, "to_date")?,
             sources: self.sources,
             sinks: self.sinks,
         })

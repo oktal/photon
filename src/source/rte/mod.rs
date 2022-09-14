@@ -22,6 +22,29 @@ use super::{DataSource, DataSourceConfig, DataSourceResult, GlobalConfig, Regist
 const END_RECORD: &'static [u8] = b"RTE ne pourra";
 const ECO2MIX_DATA_URL: &str = "https://eco2mix.rte-france.com/curves/eco2mixDl";
 
+struct DaysIterator(NaiveDate, NaiveDate);
+
+impl Iterator for DaysIterator {
+    type Item = NaiveDate;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0 <= self.1 {
+            let curr = self.0;
+            let next = curr.succ();
+
+            self.0 = next;
+            Some(curr)
+        }
+        else {
+            None
+        }
+    }
+}
+
+fn iter_days(from: NaiveDate, to: NaiveDate) -> DaysIterator {
+    DaysIterator(from, to)
+}
+
 #[derive(Error, Debug)]
 enum DownloadError {
     #[error("error creating file {1}: {0}")]
@@ -161,10 +184,10 @@ fn format_url(date: NaiveDate) -> String {
     format!("{ECO2MIX_DATA_URL}?date={}", date.format("%d/%m/%Y"))
 }
 
-fn download(date: NaiveDate, folder: impl AsRef<Path>) -> Result<PathBuf, DownloadError> {
+fn download(date: NaiveDate, folder: &Path) -> Result<PathBuf, DownloadError> {
     let url = format_url(date);
 
-    let mut file_path = folder.as_ref().to_path_buf();
+    let mut file_path = folder.to_path_buf();
     file_path.push(format!("eco2mix-{}.zip", date.format("%Y-%m-%d")));
 
     info!(
@@ -265,11 +288,21 @@ fn collect(
     global_config: &GlobalConfig,
     download_folder: impl AsRef<Path>,
 ) -> Result<Points, Error> {
-    download(global_config.from_date, download_folder)
-        .map_err(Error::Download)
-        .and_then(|file_path| extract(file_path).map_err(Error::Extraction))
-        .and_then(|file_path| read(file_path).map_err(Error::Data))
-        .map(|lines| lines.into())
+    let mut points = Points::new();
+
+    for date in iter_days(global_config.from_date, global_config.to_date) {
+        info!("collecting date for {date}");
+
+        let day_points: Points = download(date, download_folder.as_ref())
+            .map_err(Error::Download)
+            .and_then(|file_path| extract(file_path).map_err(Error::Extraction))
+            .and_then(|file_path| read(file_path).map_err(Error::Data))
+            .map(|lines| lines.into())?;
+
+        points.merge_with(day_points);
+    }
+
+    Ok(points)
 }
 
 struct Rte {
@@ -306,4 +339,28 @@ impl DataSource for Rte {
 
 inventory::submit! {
     Registration::new::<Config>("rte")
+}
+
+#[cfg(test)]
+mod test {
+    use super::iter_days;
+    use chrono::NaiveDate;
+
+    fn assert_day_range(from: NaiveDate, to: NaiveDate, expected: Vec<(NaiveDate, NaiveDate)>) {
+        assert_eq!(iter_days(from, to).collect::<Vec<_>>(), expected);
+    }
+
+
+    #[test]
+    fn test_day_range() {
+        assert_day_range(NaiveDate::from_ymd(2022, 5, 1), NaiveDate::from_ymd(2022, 5, 2), vec![
+            (NaiveDate::from_ymd(2022, 5, 1), NaiveDate::from_ymd(2022, 5, 2)),
+        ]);
+
+        assert_day_range(NaiveDate::from_ymd(2022, 5, 1), NaiveDate::from_ymd(2022, 5, 4), vec![
+            (NaiveDate::from_ymd(2022, 5, 1), NaiveDate::from_ymd(2022, 5, 2)),
+            (NaiveDate::from_ymd(2022, 5, 2), NaiveDate::from_ymd(2022, 5, 3)),
+            (NaiveDate::from_ymd(2022, 5, 3), NaiveDate::from_ymd(2022, 5, 4)),
+        ]);
+    }
 }
